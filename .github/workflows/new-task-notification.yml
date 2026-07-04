@@ -1,0 +1,75 @@
+name: New Task Email Notification
+
+on:
+  # Trigger when a new GitHub Issue is created
+  issues:
+    types: [opened]
+
+  # Trigger when the Task.md file is modified on the main branch
+  push:
+    branches:
+      - main
+    paths:
+      - "Task.md"
+
+jobs:
+  send-email-notification:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout the code (needed to analyze git changes for Task.md pushes)
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 2
+
+      # Step 2: Extract details for Issue task
+      - name: Handle Issue Task
+        if: github.event_name == 'issues'
+        run: |
+          echo "SUBJECT=New Task Assigned: ${{ github.event.issue.title }}" >> $GITHUB_ENV
+
+          # Create escaping for HTML body
+          BODY_CONTENT="A new GitHub Issue task has been created by <b>${{ github.event.issue.user.login }}</b>.<br/><br/><b>Title:</b> ${{ github.event.issue.title }}<br/><b>Description:</b> ${{ github.event.issue.body }}<br/><br/><a href='${{ github.event.issue.html_url }}' style='display: inline-block; padding: 10px 15px; color: #fff; background-color: #2196F3; text-decoration: none; border-radius: 4px;'>View Issue on GitHub</a>"
+          echo "BODY=$BODY_CONTENT" >> $GITHUB_ENV
+
+      # Step 3: Extract details for Task.md push
+      - name: Handle Task.md Update
+        if: github.event_name == 'push'
+        run: |
+          # Get git diff for Task.md to show what new lines were added
+          DIFF=$(git diff HEAD~1 HEAD Task.md | grep -E '^\+[^+]' | sed 's/^+//' || true)
+          if [ -z "$DIFF" ]; then
+            DIFF="Task.md was updated, but no specific new lines were detected."
+          fi
+
+          # HTML escape diff
+          DIFF_ESC=$(echo "$DIFF" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&#39;/g' | awk '{printf "%s<br/>", $0}')
+
+          echo "SUBJECT=Task List Updated in Repository" >> $GITHUB_ENV
+          BODY_CONTENT="The <b>Task.md</b> file was updated by <b>${{ github.actor }}</b>.<br/><br/><b>New task lines added:</b><br/><code style='display:block; background:#f4f4f4; padding:10px; border-radius:4px;'>$DIFF_ESC</code><br/><br/><a href='${{ github.event.compare }}' style='display: inline-block; padding: 10px 15px; color: #fff; background-color: #4CAF50; text-decoration: none; border-radius: 4px;'>View Changes on GitHub</a>"
+          echo "BODY=$BODY_CONTENT" >> $GITHUB_ENV
+
+      # Step 4: Send the Email
+      - name: Send Email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.MAIL_SERVER || 'smtp.gmail.com' }}
+          server_port: ${{ secrets.MAIL_PORT || 465 }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: ${{ env.SUBJECT }}
+          to: ${{ secrets.MAIL_TO }}
+          from: GitHub Actions <${{ secrets.MAIL_USERNAME }}>
+          secure: true
+          html_body: |
+            <html>
+              <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; background-color: #ffffff;">
+                  <h2 style="color: #4CAF50; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; margin-top: 0;">📋 New Task Notification</h2>
+                  <p>${{ env.BODY }}</p>
+                  <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+                  <small style="color: #777;">This is an automated notification from your repository: <b>${{ github.repository }}</b></small>
+                </div>
+              </body>
+            </html>
